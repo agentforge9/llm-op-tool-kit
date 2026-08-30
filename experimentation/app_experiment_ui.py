@@ -11,6 +11,7 @@ from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.input_widget import TextInput
 from chainlit.step import Step
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
+from semantic_kernel.contents import ImageContent, TextContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 from semantic_kernel.connectors.ai.open_ai import AzureAudioToText, AzureTextToAudio, OpenAITextToAudioExecutionSettings
 from semantic_kernel.contents import AudioContent
@@ -204,11 +205,16 @@ async def process_audio():
         )
         await cl.Message(content=final_response, elements=[output_audio_el]).send()
 
-async def run_team(query: str):
+async def run_team(query: str, image_content: ImageContent):
     query_with_init_thought = sql_executor_env.attach_init_observation(query)
-    await chat.add_chat_message(
-        ChatMessageContent(role=AuthorRole.USER, content=query_with_init_thought)
-    )
+    if image_content:
+        await chat.add_chat_message(
+            ChatMessageContent(role=AuthorRole.USER, items=[TextContent(text=query_with_init_thought), image_content])
+        )
+    else:
+        await chat.add_chat_message(
+            ChatMessageContent(role=AuthorRole.USER, content=query_with_init_thought)
+        )
     cl_msg = cl.Message(
         content=f"{AuthorRole.USER.upper()}: init: {query_with_init_thought}",
         author=AuthorRole.USER,
@@ -240,7 +246,15 @@ async def run_team(query: str):
 
 @cl.on_message
 async def run_chat(message: cl.Message):
-    await run_team(message.content)
+    if message.elements:
+        if len(message.elements) > 1:
+            await cl.Message(content="Please provide only one image at a time.").send()
+            return
+        image = [file for file in message.elements if "image" in file.mime][0]
+        image_content = ImageContent.from_image_file(image.path)
+        await run_team(message.content, image_content)
+    else:
+        await run_team(message.content, None)
 
 
 @cl.on_chat_end
